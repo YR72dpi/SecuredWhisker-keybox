@@ -18,7 +18,7 @@
 ```mermaid
 graph TD
     A[Installation SW-KeyBox sur Raspberry Pi] --> B[Connexion Bluetooth via PIN]
-    B --> C[Utilisateur définit mot de passe numérique A]
+    B --> C[Utilisateur définit mot de passe numérique : __A__]
     
     subgraph "Chiffrement et transmission"
         C --> D[Chiffrement clé privée avec A en AES]
