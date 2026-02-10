@@ -41,14 +41,22 @@ try:
     
     epd.init(epd.FULL_UPDATE)
     gt.GT_Init()
-    epd.Clear(0x00)
     
     t = threading.Thread(target=pthread_irq)
     t.deamon = True
     t.start()
 
-    screenManager.printText(epd, "Bonjour monde !", 15, (122/2)-15)
-       
+    # Premier affichage (une seule fois)
+    screenManager.printText(epd, "Hello world !", 5, 5)
+    time.sleep(2)
+
+    # Tous les changements suivants
+    screenManager.printText(epd, "What's up ?", 5, 5)
+    time.sleep(2)
+
+    # À la fin
+    # screenManager.clearAndSleep(epd)
+
     # Garder le programme actif
     while True:
         time.sleep(1)
