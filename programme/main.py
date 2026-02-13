@@ -54,6 +54,8 @@ try:
     screenManager.printText(epd, "What's up ?", 5, 5)
     time.sleep(2)
 
+    screenManager.showImage(epd)
+
     # À la fin
     # screenManager.clearAndSleep(epd)
 
