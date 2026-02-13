@@ -40,6 +40,7 @@ try:
     logging.info("init and Clear")
     
     epd.init(epd.FULL_UPDATE)
+    epd.Clear(0xff)
     gt.GT_Init()
     
     t = threading.Thread(target=pthread_irq)
@@ -54,7 +55,7 @@ try:
     screenManager.printText(epd, "What's up ?", 5, 5)
     time.sleep(2)
 
-    screenManager.showImage(epd)
+    screenManager.printLines(epd, ["Ligne 1", "Ligne 2", "Ligne 3"])
 
     # À la fin
     # screenManager.clearAndSleep(epd)
