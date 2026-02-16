@@ -5,25 +5,27 @@ if os.path.exists(libdir):
     sys.path.append(libdir)
     
 import asyncio
+from typing import Callable, Optional
 from dbus_next.aio import MessageBus
 from dbus_next.service import ServiceInterface, method, dbus_property
-from dbus_next.constants import PropertyAccess, BusType
+from dbus_next.constants import PropertyAccess, BusType, MessageType
+from dbus_next import Message
 from dbus_next import Variant
 
 BLUEZ = 'org.bluez'
 ADAPTER = '/org/bluez/hci0'
 GATT_MANAGER = 'org.bluez.GattManager1'
 LE_ADV_MANAGER = 'org.bluez.LEAdvertisingManager1'
+AGENT_MANAGER = 'org.bluez.AgentManager1'
 
 APP_PATH = '/com/example'
 SERVICE_PATH = f'{APP_PATH}/service0'
 CHAR_PATH = f'{SERVICE_PATH}/char0'
 ADV_PATH = f'{APP_PATH}/advertisement0'
-LOCAL_NAME = 'RaspberryBLE'
-
+AGENT_PATH = f'{APP_PATH}/agent0'
+LOCAL_NAME = 'SW-Keybox'
 SERVICE_UUID = '12345678-1234-5678-1234-56789abcdef0'
 CHAR_UUID = '12345678-1234-5678-1234-56789abcdef1'
-
 
 # ======================
 # GATT CHARACTERISTIC
@@ -74,7 +76,8 @@ class Characteristic(ServiceInterface):
 
     @dbus_property(access=PropertyAccess.READ)
     def Flags(self) -> 'as':
-        return ['read', 'write', 'notify']
+        # Les flags encrypt-* forcent un lien chiffré, donc un pairing/bonding côté client.
+        return ['read', 'write', 'notify', 'encrypt-read', 'encrypt-write']
 
     @dbus_property(access=PropertyAccess.READ)
     def Descriptors(self) -> 'ao':
@@ -161,25 +164,151 @@ class Advertisement(ServiceInterface):
 
 
 # ======================
-# MAIN
+# PAIRING AGENT
 # ======================
 
-async def initRaspberryPiBluetooth ():
-    os.system("systemctl stop bluetooth")
-    os.system("pkill bluetoothd")
-    os.system("btmgmt power off")
-    os.system("btmgmt bredr off")
+class PairingAgent(ServiceInterface):
+    def __init__(self, display_cb: Optional[Callable[[str], None]] = None):
+        super().__init__('org.bluez.Agent1')
+        self._display_cb = display_cb
 
-    os.system("btmgmt le on")
-    os.system("btmgmt power on")
-    os.system("systemctl start bluetooth")
-    os.system("bluetoothctl power on")
-    os.system("bluetoothctl discoverable on")
-    os.system("bluetoothctl pairable on")
+    def _display(self, message: str):
+        if self._display_cb is not None:
+            try:
+                self._display_cb(message)
+            except Exception:
+                pass
 
-async def main():
+    @method()
+    def Release(self):
+        print('Agent released')
 
+    @method()
+    def DisplayPasskey(self, device: 'o', passkey: 'u', entered: 'q'):
+        print('DisplayPasskey', device, passkey, entered)
+        # Le passkey est généralement un entier (0..999999). On l'affiche sur 6 chiffres.
+        self._display(f"Code BLE: {int(passkey):06d}")
+
+    @method()
+    def RequestConfirmation(self, device: 'o', passkey: 'u'):
+        # Si BlueZ utilise le mode "numeric comparison", accepter automatiquement.
+        print('RequestConfirmation', device, passkey)
+        try:
+            self._display(f"Code BLE: {int(passkey):06d}")
+        except Exception:
+            pass
+        return
+
+    @method()
+    def AuthorizeService(self, device: 'o', uuid: 's'):
+        print('AuthorizeService', device, uuid)
+        return
+
+    @method()
+    def Cancel(self):
+        print('Agent request cancelled')
+
+
+async def register_pairing_agent(
+    bus: MessageBus,
+    capability: str = 'DisplayYesNo',
+    display_cb: Optional[Callable[[str], None]] = None,
+):
+    """Enregistre un agent BlueZ (affichage du code de vérification sur le device).
+
+    capability (BlueZ): 'DisplayOnly' | 'DisplayYesNo' | 'KeyboardOnly' | 'NoInputNoOutput' | 'KeyboardDisplay'
+    """
+    agent = PairingAgent(display_cb=display_cb)
+    bus.export(AGENT_PATH, agent)
+
+    introspection = await bus.introspect(BLUEZ, '/org/bluez')
+    obj = bus.get_proxy_object(BLUEZ, '/org/bluez', introspection)
+    agent_mgr = obj.get_interface(AGENT_MANAGER)
+
+    print(f"Registering Agent (capability={capability}) at {AGENT_PATH}...")
+    await agent_mgr.call_register_agent(AGENT_PATH, capability)
+    await agent_mgr.call_request_default_agent(AGENT_PATH)
+    print("Pairing Agent ready")
+
+
+def _device_path_to_mac(device_path: str) -> Optional[str]:
+    # /org/bluez/hci0/dev_XX_XX_XX_XX_XX_XX -> XX:XX:XX:XX:XX:XX
+    if not device_path:
+        return None
+    marker = '/dev_'
+    if marker not in device_path:
+        return None
+    tail = device_path.split(marker, 1)[1]
+    mac = tail.replace('_', ':')
+    return mac
+
+
+async def _install_connection_watcher(bus: MessageBus, status_cb: Optional[Callable[[str], None]]):
+    if status_cb is None:
+        return
+
+    # S'abonner aux signaux PropertiesChanged de BlueZ (Device1)
+    match_rule = "type='signal',sender='org.bluez',interface='org.freedesktop.DBus.Properties',member='PropertiesChanged'"
+    await bus.call(
+        Message(
+            destination='org.freedesktop.DBus',
+            path='/org/freedesktop/DBus',
+            interface='org.freedesktop.DBus',
+            member='AddMatch',
+            signature='s',
+            body=[match_rule],
+        )
+    )
+
+    def handler(msg: Message):
+        try:
+            if msg.message_type != MessageType.SIGNAL:
+                return
+            if msg.interface != 'org.freedesktop.DBus.Properties' or msg.member != 'PropertiesChanged':
+                return
+            iface_name, changed_props, _invalidated = msg.body
+            if iface_name != 'org.bluez.Device1':
+                return
+            if 'Connected' not in changed_props:
+                return
+
+            connected = bool(changed_props['Connected'].value)
+            mac = _device_path_to_mac(msg.path)
+            if connected:
+                status_cb(f"CONN: connected {mac or ''}".strip())
+            else:
+                status_cb(f"CONN: disconnected {mac or ''}".strip())
+        except Exception:
+            # Ne jamais casser la boucle DBus
+            return
+
+    bus.add_message_handler(handler)
+
+
+async def start_ble_server(
+    *,
+    status_cb: Optional[Callable[[str], None]] = None,
+    display_cb: Optional[Callable[[str], None]] = None,
+):
+    """Démarre le serveur BLE (GATT + advertisement) et reste actif.
+
+    - `status_cb`: messages d'étape (utile pour l'écran)
+    - `display_cb`: affichage du code de pairing (DisplayPasskey/RequestConfirmation)
+    """
+
+    def status(message: str):
+        print(message)
+        if status_cb is not None:
+            try:
+                status_cb(message)
+            except Exception:
+                pass
+
+    await initRaspberryPiBluetooth()
+    status("BLE: bus système…")
     bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
+    await _install_connection_watcher(bus, status_cb)
+    await register_pairing_agent(bus, display_cb=display_cb)
 
     service = Service()
     char = Characteristic(SERVICE_PATH)
@@ -191,19 +320,49 @@ async def main():
     bus.export(CHAR_PATH, char)
     bus.export(ADV_PATH, adv)
 
+    status("BLE: introspection adapter…")
     introspection = await bus.introspect(BLUEZ, ADAPTER)
     obj = bus.get_proxy_object(BLUEZ, ADAPTER, introspection)
 
     gatt = obj.get_interface(GATT_MANAGER)
     adv_manager = obj.get_interface(LE_ADV_MANAGER)
 
-    print("Registering GATT...")
+    status("BLE: RegisterApplication…")
     await asyncio.wait_for(gatt.call_register_application(APP_PATH, {}), timeout=15.0)
     await asyncio.sleep(1)
-    print("Registering Advertisement...")
+    status("BLE: RegisterAdvertisement…")
     await asyncio.wait_for(adv_manager.call_register_advertisement(ADV_PATH, {}), timeout=15.0)
 
-    print(f"BLE Server running. Advertising as '{LOCAL_NAME}'.")
+    status(f"BLE: prêt ({LOCAL_NAME})")
     await asyncio.get_running_loop().create_future()
 
-asyncio.run(main())
+
+# ======================
+# MAIN
+# ======================
+
+async def initRaspberryPiBluetooth ():
+    os.system("systemctl stop bluetooth")
+    os.system("pkill bluetoothd")
+    os.system("btmgmt power off")
+    os.system("btmgmt bredr off")
+
+    # Best effort: capacité d'E/S correspondant à DisplayYesNo
+    os.system("btmgmt bondable on")
+    os.system("btmgmt io-cap 1")  # DisplayYesNo
+
+    os.system("btmgmt le on")
+    os.system("btmgmt power on")
+    os.system("systemctl start bluetooth")
+    os.system("bluetoothctl power on")
+    os.system("bluetoothctl discoverable on")
+    os.system("bluetoothctl pairable on")
+
+async def main():
+    # Important: sur téléphone, le code affiché lors du pairing peut être généré par la procédure BLE.
+    # display_cb permet d'afficher le même code côté Raspberry (console / écran).
+    await start_ble_server(status_cb=None, display_cb=print)
+
+
+if __name__ == '__main__':
+    asyncio.run(main())

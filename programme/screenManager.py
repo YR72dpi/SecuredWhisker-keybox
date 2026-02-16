@@ -85,6 +85,8 @@ def clearNoFlash(epd):
     epd.TurnOnDisplayPart()  # Mise à jour rapide sans attente
 
 def clearAndSleep(epd):
+    clearNoFlash(epd)
+    time.sleep(1)
     """Applique une image blanche neutre puis éteint l'écran"""
     image = Image.open(os.path.join(picdir, "logo.bmp"))  # 255: blanc
     buffer = epd.getbuffer(image)
