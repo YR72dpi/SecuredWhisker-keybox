@@ -164,12 +164,12 @@ class Advertisement(ServiceInterface):
 # MAIN
 # ======================
 
-async def main():
-
+async def initRaspberryPiBluetooth ():
     os.system("systemctl stop bluetooth")
     os.system("pkill bluetoothd")
     os.system("btmgmt power off")
     os.system("btmgmt bredr off")
+
     os.system("btmgmt le on")
     os.system("btmgmt power on")
     os.system("systemctl start bluetooth")
@@ -177,7 +177,8 @@ async def main():
     os.system("bluetoothctl discoverable on")
     os.system("bluetoothctl pairable on")
 
-    
+async def main():
+
     bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
 
     service = Service()
