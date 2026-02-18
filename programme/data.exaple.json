@@ -1,0 +1,8 @@
+{
+    "initialized": false,
+    "iv" : null,
+    "keypair": {
+        "public": null,
+        "private": null
+    }
+}
