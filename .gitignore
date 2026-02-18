@@ -1,3 +1,3 @@
 *.bat
 update.sh
-./programme/data.json
+programme/data.json
