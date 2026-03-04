@@ -6,6 +6,7 @@ if os.path.exists(libdir):
     
 import asyncio
 from typing import Callable, Optional
+import JsonManager
 from dbus_next.aio import MessageBus
 from dbus_next.service import ServiceInterface, method, dbus_property
 from dbus_next.constants import PropertyAccess, BusType, MessageType
@@ -41,7 +42,9 @@ class Characteristic(ServiceInterface):
     @method()
     def ReadValue(self, options: 'a{sv}') -> 'ay':
         print("Read request")
-        return self.value
+        data = JsonManager.get_all_json()
+        initialized = data.get("initialized", False)
+        return b'true' if initialized else b'false'
 
     @method()
     def WriteValue(self, value: 'ay', options: 'a{sv}'):
