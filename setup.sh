@@ -8,3 +8,5 @@ sudo pip3 install spidev
 sudo apt install python3-gpiozero
 
 sudo apt install python3-smbus
+
+mv ./programme/data.example.json ./programme/data.json
