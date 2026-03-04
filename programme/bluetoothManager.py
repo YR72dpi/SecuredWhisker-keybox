@@ -269,15 +269,21 @@ async def _install_connection_watcher(bus: MessageBus, status_cb: Optional[Calla
             iface_name, changed_props, _invalidated = msg.body
             if iface_name != 'org.bluez.Device1':
                 return
-            if 'Connected' not in changed_props:
-                return
 
-            connected = bool(changed_props['Connected'].value)
             mac = _device_path_to_mac(msg.path)
-            if connected:
-                status_cb(f"CONN: connected {mac or ''}".strip())
-            else:
-                status_cb(f"CONN: disconnected {mac or ''}".strip())
+
+            if 'Connected' in changed_props:
+                connected = bool(changed_props['Connected'].value)
+                if connected:
+                    status_cb(f"CONN: connected {mac or ''}".strip())
+                else:
+                    status_cb(f"CONN: disconnected {mac or ''}".strip())
+
+            # Bonded passe à True une fois le pairing/bonding complètement validé
+            if 'Bonded' in changed_props:
+                bonded = bool(changed_props['Bonded'].value)
+                if bonded:
+                    status_cb(f"BONDED: {mac or ''}".strip())
         except Exception:
             # Ne jamais casser la boucle DBus
             return
