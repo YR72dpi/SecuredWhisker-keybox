@@ -55,7 +55,6 @@ try:
         screenManager.printLines(epd, [
             "---------------- SW Keybox ----------------",
             "Prêt pour apairage",
-            "En attente du code…",
             "(pairing BLE)"
             ], 5, 5)
 
