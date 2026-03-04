@@ -18,6 +18,7 @@ import queue
 
 import screenManager
 import bluetoothManager
+from JsonManager import get_all_json
 
 logging.basicConfig(level=logging.DEBUG)
 flag_t = 1
@@ -70,6 +71,23 @@ try:
             lines.append(mac)
         screenManager.printLines(epd, lines, 5, 5)
 
+    def show_key_status():
+        try:
+            data = get_all_json()
+            initialized = bool(data.get("initialized", False))
+        except Exception:
+            initialized = False
+
+        if initialized:
+            msg = "Clés présentes"
+        else:
+            msg = "Aucune paire de clé présente"
+
+        screenManager.printLines(epd, [
+            "---------------- SW Keybox ----------------",
+            msg,
+        ], 5, 5)
+
     show_waiting_screen()
 
     ble_queue: "queue.Queue[str]" = queue.Queue()
@@ -118,6 +136,9 @@ try:
                     show_connected(mac)
                 elif state == "disconnected":
                     show_waiting_screen()
+            elif isinstance(msg, str) and msg.startswith("BONDED:"):
+                # Pairing validé: on peut maintenant afficher l'état des clés
+                show_key_status()
         except queue.Empty:
             pass
     
