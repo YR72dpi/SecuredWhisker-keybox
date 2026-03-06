@@ -5,8 +5,9 @@ if os.path.exists(libdir):
     sys.path.append(libdir)
     
 import asyncio
+import json
 from typing import Callable, Optional
-import JsonManager
+import dataManager
 from dbus_next.aio import MessageBus
 from dbus_next.service import ServiceInterface, method, dbus_property
 from dbus_next.constants import PropertyAccess, BusType, MessageType
@@ -29,6 +30,14 @@ SERVICE_UUID = '12345678-1234-5678-1234-56789abcdef0'
 CHAR_UUID = '12345678-1234-5678-1234-56789abcdef1'
 
 # ======================
+# PROTOCOLE BLE
+# ======================
+# ReadValue : retourne toujours {"initialized", "iv", "public", "private"}
+#
+# WriteValue — écriture (JSON brut) :
+#   {"iv": "...", "public": "...", "private": "..."}  → écriture des secrets (seulement si initialized == false)
+
+# ======================
 # GATT CHARACTERISTIC
 # ======================
 
@@ -42,14 +51,27 @@ class Characteristic(ServiceInterface):
     @method()
     def ReadValue(self, options: 'a{sv}') -> 'ay':
         print("Read request")
-        data = JsonManager.get_all_json()
-        initialized = data.get("initialized", False)
-        return b'true' if initialized else b'false'
+        return json.dumps(dataManager.get_secrets()).encode()
 
     @method()
     def WriteValue(self, value: 'ay', options: 'a{sv}'):
         self.value = bytes(value)
-        print("Write:", self.value)
+        if not self.value:
+            print("WriteValue: payload vide")
+            return
+        # Écriture des secrets : JSON brut
+        try:
+            payload = json.loads(self.value.decode('utf-8'))
+            print("Write secrets:", list(payload.keys()))
+            dataManager.set_secrets(
+                iv=str(payload.get('iv', '')),
+                public=str(payload.get('public', '')),
+                private=str(payload.get('private', '')),
+            )
+        except PermissionError as e:
+            print(f"WriteValue blocked: {e}")
+        except Exception as e:
+            print(f"WriteValue error: {e}")
 
     @method()
     def StartNotify(self):
