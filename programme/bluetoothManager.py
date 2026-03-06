@@ -49,12 +49,12 @@ class Characteristic(ServiceInterface):
         self.notifying = False
 
     @method()
-    def ReadValue(self, options: 'a{sv}') -> 'ay':
+    def ReadValue(self, options: 'a{sv}') -> 'ay':  # type: ignore[name-defined]  # noqa: F821
         print("Read request")
         return json.dumps(dataManager.get_secrets()).encode()
 
     @method()
-    def WriteValue(self, value: 'ay', options: 'a{sv}'):
+    def WriteValue(self, value: 'ay', options: 'a{sv}'):  # type: ignore[override, name-defined]  # noqa: F821
         self.value = bytes(value)
         if not self.value:
             print("WriteValue: payload vide")
@@ -84,28 +84,28 @@ class Characteristic(ServiceInterface):
         print("Notifications disabled")
 
     @dbus_property(access=PropertyAccess.READ)
-    def UUID(self) -> 's':
+    def UUID(self) -> 's':  # type: ignore[name-defined]  # noqa: F821
         return CHAR_UUID
 
     @dbus_property(access=PropertyAccess.READ)
-    def Service(self) -> 'o':
+    def Service(self) -> 'o':  # type: ignore[name-defined]  # noqa: F821
         return self._service_path
 
     @dbus_property(access=PropertyAccess.READ)
-    def Value(self) -> 'ay':
+    def Value(self) -> 'ay':  # type: ignore[name-defined]  # noqa: F821
         return self.value
 
     @dbus_property(access=PropertyAccess.READ)
-    def Notifying(self) -> 'b':
+    def Notifying(self) -> 'b':  # type: ignore[name-defined]  # noqa: F821
         return self.notifying
 
     @dbus_property(access=PropertyAccess.READ)
-    def Flags(self) -> 'as':
+    def Flags(self) -> 'as':  # type: ignore[name-defined]  # noqa: F821
         # Les flags encrypt-* forcent un lien chiffré, donc un pairing/bonding côté client.
         return ['read', 'write', 'notify', 'encrypt-read', 'encrypt-write']
 
     @dbus_property(access=PropertyAccess.READ)
-    def Descriptors(self) -> 'ao':
+    def Descriptors(self) -> 'ao':  # type: ignore[name-defined]  # noqa: F821
         return []
 
 
@@ -118,15 +118,15 @@ class Service(ServiceInterface):
         super().__init__('org.bluez.GattService1')
 
     @dbus_property(access=PropertyAccess.READ)
-    def UUID(self) -> 's':
+    def UUID(self) -> 's': # type: ignore[name-defined]  # noqa: F821
         return SERVICE_UUID
 
     @dbus_property(access=PropertyAccess.READ)
-    def Primary(self) -> 'b':
+    def Primary(self) -> 'b': # type: ignore[name-defined]  # noqa: F821
         return True
 
     @dbus_property(access=PropertyAccess.READ)
-    def Includes(self) -> 'ao':
+    def Includes(self) -> 'ao': # type: ignore[name-defined]  # noqa: F821
         return []
 
 
@@ -137,7 +137,7 @@ class Application(ServiceInterface):
         self._characteristic = characteristic
 
     @method()
-    def GetManagedObjects(self) -> 'a{oa{sa{sv}}}':
+    def GetManagedObjects(self) -> 'a{oa{sa{sv}}}':  # type: ignore[name-defined]  # noqa: F821
         return {
             SERVICE_PATH: {
                 'org.bluez.GattService1': {
@@ -168,19 +168,19 @@ class Advertisement(ServiceInterface):
         super().__init__('org.bluez.LEAdvertisement1')
 
     @dbus_property(access=PropertyAccess.READ)
-    def Type(self) -> 's':
+    def Type(self) -> 's': # type: ignore[name-defined]  # noqa: F821
         return 'peripheral'
 
     @dbus_property(access=PropertyAccess.READ)
-    def ServiceUUIDs(self) -> 'as':
+    def ServiceUUIDs(self) -> 'as': # type: ignore[name-defined]  # noqa: F821
         return [SERVICE_UUID]
 
     @dbus_property(access=PropertyAccess.READ)
-    def LocalName(self) -> 's':
+    def LocalName(self) -> 's': # type: ignore[name-defined]  # noqa: F821
         return LOCAL_NAME
 
     @dbus_property(access=PropertyAccess.READ)
-    def Includes(self) -> 'as':
+    def Includes(self) -> 'as':  # type: ignore[name-defined]  # noqa: F821
         return ['tx-power']
 
     @method()
@@ -209,13 +209,13 @@ class PairingAgent(ServiceInterface):
         print('Agent released')
 
     @method()
-    def DisplayPasskey(self, device: 'o', passkey: 'u', entered: 'q'):
+    def DisplayPasskey(self, device: 'o', passkey: 'u', entered: 'q'):  # type: ignore[name-defined]  # noqa: F821
         print('DisplayPasskey', device, passkey, entered)
         # Le passkey est généralement un entier (0..999999). On l'affiche sur 6 chiffres.
         self._display(f"Code BLE: {int(passkey):06d}")
 
     @method()
-    def RequestConfirmation(self, device: 'o', passkey: 'u'):
+    def RequestConfirmation(self, device: 'o', passkey: 'u'):  # type: ignore[name-defined]  # noqa: F821
         # Si BlueZ utilise le mode "numeric comparison", accepter automatiquement.
         print('RequestConfirmation', device, passkey)
         try:
@@ -225,7 +225,7 @@ class PairingAgent(ServiceInterface):
         return
 
     @method()
-    def AuthorizeService(self, device: 'o', uuid: 's'):
+    def AuthorizeService(self, device: 'o', uuid: 's'):  # type: ignore[name-defined]  # noqa: F821
         print('AuthorizeService', device, uuid)
         return
 
