@@ -10,3 +10,4 @@ sudo apt install python3-gpiozero
 sudo apt install python3-smbus
 
 mv ./programme/data.example.json ./programme/data.json
+sudo chmod 700 ./programme/data.json
