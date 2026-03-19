@@ -23,6 +23,8 @@ from JsonManager import get_all_json
 logging.basicConfig(level=logging.DEBUG)
 flag_t = 1
 
+# la c'est developpé "affichage first" peut-etre le faire "bluetooth first"
+
 def pthread_irq():
     print("pthread running")
     while flag_t == 1:
