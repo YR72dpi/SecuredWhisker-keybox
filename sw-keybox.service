@@ -1,0 +1,13 @@
+[Unit]
+Description=SW Keybox Main
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/pi/sw-keybox/programme/main.py
+Restart=always
+RestartSec=2
+User=root
+
+[Install]
+WantedBy=multi-user.target
