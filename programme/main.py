@@ -103,12 +103,17 @@ try:
         if isinstance(msg, str) and msg.startswith("Code BLE:"):
             ble_queue.put(msg)
 
+    def shutdown_action():
+        screenManager.clearAndSleep(epd)
+        os.system("shutdown -h now")
+
     def run_ble():
         try:
             asyncio.run(
                 bluetoothManager.start_ble_server(
                     status_cb=ble_status_cb,
                     display_cb=ble_display_cb,
+                    shutdown_cb=shutdown_action,
                 )
             )
         except Exception as e:

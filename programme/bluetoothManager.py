@@ -14,6 +14,8 @@ from dbus_next.constants import PropertyAccess, BusType, MessageType
 from dbus_next import Message
 from dbus_next import Variant
 
+import logging
+
 BLUEZ = 'org.bluez'
 ADAPTER = '/org/bluez/hci0'
 GATT_MANAGER = 'org.bluez.GattManager1'
@@ -42,11 +44,12 @@ CHAR_UUID = '12345678-1234-5678-1234-56789abcdef1'
 # ======================
 
 class Characteristic(ServiceInterface):
-    def __init__(self, service_path: str):
+    def __init__(self, service_path: str, shutdown_cb=None):
         super().__init__('org.bluez.GattCharacteristic1')
         self._service_path = service_path
         self.value = b'Hello BLE'
         self.notifying = False
+        self.shutdown_cb = shutdown_cb
 
     @method()
     def ReadValue(self, options: 'a{sv}') -> 'ay':  # type: ignore[name-defined]  # noqa: F821
@@ -56,22 +59,35 @@ class Characteristic(ServiceInterface):
     @method()
     def WriteValue(self, value: 'ay', options: 'a{sv}'):  # type: ignore[override, name-defined]  # noqa: F821
         self.value = bytes(value)
-        if not self.value:
-            print("WriteValue: payload vide")
-            return
+        # if not self.value:
+        #     print("WriteValue: payload vide")
+        #     return
+        
+        payload = json.loads(self.value.decode('utf-8'))
+        logging.debug(payload)
+
         # Écriture des secrets : JSON brut
-        try:
-            payload = json.loads(self.value.decode('utf-8'))
-            print("Write secrets:", list(payload.keys()))
-            dataManager.set_secrets(
-                iv=str(payload.get('iv', '')),
-                public=str(payload.get('public', '')),
-                private=str(payload.get('private', '')),
-            )
-        except PermissionError as e:
-            print(f"WriteValue blocked: {e}")
-        except Exception as e:
-            print(f"WriteValue error: {e}")
+        if 'iv' in payload and 'public' in payload and 'private' in payload: 
+            try:
+                print("Write secrets:", list(payload.keys()))
+                dataManager.set_secrets(
+                    iv=str(payload.get('iv', '')),
+                    public=str(payload.get('public', '')),
+                    private=str(payload.get('private', '')),
+                )
+            except PermissionError as e:
+                print(f"WriteValue blocked: {e}")
+            except Exception as e:
+                print(f"WriteValue error: {e}")
+
+        if 'action' in payload and str(payload.get('action', '')) == "shutdown": 
+            try:
+                print("shutdown")
+                self.shutdown_cb()
+            except PermissionError as e:
+                print(f"WriteValue blocked: {e}")
+            except Exception as e:
+                print(f"WriteValue error: {e}")
 
     @method()
     def StartNotify(self):
@@ -102,7 +118,8 @@ class Characteristic(ServiceInterface):
     @dbus_property(access=PropertyAccess.READ)
     def Flags(self) -> 'as':  # type: ignore[name-defined]  # noqa: F821
         # Les flags encrypt-* forcent un lien chiffré, donc un pairing/bonding côté client.
-        return ['read', 'write', 'notify', 'encrypt-read', 'encrypt-write']
+        return ['read', 'write']
+        # return ['read', 'write', 'notify', 'encrypt-read', 'encrypt-write']
 
     @dbus_property(access=PropertyAccess.READ)
     def Descriptors(self) -> 'ao':  # type: ignore[name-defined]  # noqa: F821
@@ -320,6 +337,7 @@ async def start_ble_server(
     *,
     status_cb: Optional[Callable[[str], None]] = None,
     display_cb: Optional[Callable[[str], None]] = None,
+    shutdown_cb: Optional[Callable[[], None]] = None,
 ):
     """Démarre le serveur BLE (GATT + advertisement) et reste actif.
 
@@ -342,7 +360,7 @@ async def start_ble_server(
     await register_pairing_agent(bus, display_cb=display_cb)
 
     service = Service()
-    char = Characteristic(SERVICE_PATH)
+    char = Characteristic(SERVICE_PATH, shutdown_cb=shutdown_cb)
     adv = Advertisement()
     app = Application(service, char)
 
