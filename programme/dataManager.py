@@ -1,5 +1,9 @@
 import JsonManager
+import hashlib
 
+
+def _md5(value: str) -> str:
+    return hashlib.md5(value.encode()).hexdigest()
 
 def get_initialized() -> bool:
     data = JsonManager.get_all_json()
@@ -50,3 +54,28 @@ def set_hash_private(private: str) -> None:
     if not private:
         raise ValueError("hash.keypair.private ne doit pas être vide.")
     JsonManager.update_value("hash.keypair.private", private)
+
+def verify_iv() -> bool:
+    data = JsonManager.get_all_json()
+    iv = data.get("iv")
+    hashedIv = data.get("hash", {}).get("iv")
+    if not iv or not hashedIv:
+        return False
+    return _md5(iv) == hashedIv
+
+def verify_public() -> bool:
+    data = JsonManager.get_all_json()
+    public = data.get("keypair", {}).get("public")
+    hashedPublic = data.get("hash", {}).get("keypair", {}).get("public")
+    if not public or not hashedPublic:
+        return False
+    return _md5(public) == hashedPublic
+
+def verify_private() -> bool:
+    data = JsonManager.get_all_json()
+    private = data.get("keypair", {}).get("private")
+    hashedPrivate = data.get("hash", {}).get("keypair", {}).get("private")
+    if not private or not hashedPrivate:
+        return False
+    return _md5(private) == hashedPrivate
+
