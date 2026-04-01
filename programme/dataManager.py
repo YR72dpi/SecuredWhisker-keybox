@@ -16,15 +16,37 @@ def get_secrets() -> dict:
         "private": keypair.get("private", None),
     }
 
-def set_secrets(iv: str, public: str, private: str) -> None:
-    """Écrit iv, keypair.public et keypair.private en une seule opération atomique
-    et passe initialized à True. Lève PermissionError si déjà initialisé,
-    ou ValueError si l'un des champs est vide."""
-    if get_initialized():
-        raise PermissionError("Le keybox est déjà initialisé : impossible de réécrire les secrets.")
-    if not iv or not public or not private:
-        raise ValueError("iv, public et private doivent tous être non vides.")
+def set_iv(iv: str) -> None:
+    if not iv:
+        raise ValueError("iv ne doit pas être vide.")
     JsonManager.update_value("iv", iv)
-    JsonManager.update_value("keypair.public", public)
-    JsonManager.update_value("keypair.private", private)
-    JsonManager.update_value("initialized", True)
+
+def set_public(public: str) -> None:
+    if not public:
+        raise ValueError("public ne doit pas être vide.")
+    current = get_secrets().get("public") or ""
+    JsonManager.update_value("keypair.public", current + public)
+
+def set_private(private: str) -> None:
+    if not private:
+        raise ValueError("private ne doit pas être vide.")
+    current = get_secrets().get("private") or ""
+    JsonManager.update_value("keypair.private", current + private)
+
+def set_initialized(value: bool) -> None:
+    JsonManager.update_value("initialized", value)
+
+def set_hash_iv(iv: str) -> None:
+    if not iv:
+        raise ValueError("hash.iv ne doit pas être vide.")
+    JsonManager.update_value("hash.iv", iv)
+
+def set_hash_public(public: str) -> None:
+    if not public:
+        raise ValueError("hash.keypair.public ne doit pas être vide.")
+    JsonManager.update_value("hash.keypair.public", public)
+
+def set_hash_private(private: str) -> None:
+    if not private:
+        raise ValueError("hash.keypair.private ne doit pas être vide.")
+    JsonManager.update_value("hash.keypair.private", private)

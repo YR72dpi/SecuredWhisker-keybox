@@ -62,35 +62,42 @@ class Characteristic(ServiceInterface):
     @method()
     def WriteValue(self, value: 'ay', options: 'a{sv}'):  # type: ignore[override, name-defined]  # noqa: F821
         self.value = bytes(value)
-        # if not self.value:
-        #     print("WriteValue: payload vide")
-        #     return
+        if not self.value:
+            print("WriteValue: payload vide")
+            # return
         
         payload = json.loads(self.value.decode('utf-8'))
         logging.debug(payload)
 
-        # Écriture des secrets : JSON brut
-        if 'iv' in payload and 'public' in payload and 'private' in payload: 
-            try:
-                print("Write secrets:", list(payload.keys()))
-                dataManager.set_secrets(
-                    iv=str(payload.get('iv', '')),
-                    public=str(payload.get('public', '')),
-                    private=str(payload.get('private', '')),
-                )
-            except PermissionError as e:
-                print(f"WriteValue blocked: {e}")
-            except Exception as e:
-                print(f"WriteValue error: {e}")
+        # write iv, private & public keys
+        if 'action' in payload and str(payload.get('action', '')) == "set_iv": 
+            print("Write iv:", list(payload.keys()))
+            dataManager.set_iv(iv=str(payload.get('set_iv', '')))
 
+        if 'action' in payload and str(payload.get('action', '')) == "set_public": 
+            print("Write public:", list(payload.keys()))
+            dataManager.set_public(str(payload.get('set_public', '')))
+        
+        if 'action' in payload and str(payload.get('action', '')) == "set_private": 
+            print("Write private:", list(payload.keys()))
+            dataManager.set_private(private=str(payload.get('set_private', '')))
+
+        if 'action' in payload and str(payload.get('action', '')) == "set_hash_iv":
+            print("Write hash iv:", list(payload.keys()))
+            dataManager.set_hash_iv(iv=str(payload.get('set_hash_iv', '')))
+
+        if 'action' in payload and str(payload.get('action', '')) == "set_hash_public":
+            print("Write hash public:", list(payload.keys()))
+            dataManager.set_hash_public(public=str(payload.get('set_hash_public', '')))
+
+        if 'action' in payload and str(payload.get('action', '')) == "set_hash_private":
+            print("Write hash private:", list(payload.keys()))
+            dataManager.set_hash_private(private=str(payload.get('set_hash_private', '')))
+
+        # shutdown the pi
         if 'action' in payload and str(payload.get('action', '')) == "shutdown": 
-            try:
-                print("shutdown")
-                self.shutdown_cb()
-            except PermissionError as e:
-                print(f"WriteValue blocked: {e}")
-            except Exception as e:
-                print(f"WriteValue error: {e}")
+            print("shutdown")
+            self.shutdown_cb()
 
     @method()
     def StartNotify(self):

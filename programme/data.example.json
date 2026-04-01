@@ -4,5 +4,12 @@
     "keypair": {
         "public": null,
         "private": null
+    },
+    "hash": {
+        "iv": null,
+        "keypair": {
+            "public": null,
+            "private": null
+        }
     }
 }
