@@ -52,10 +52,13 @@ class Characteristic(ServiceInterface):
         self.shutdown_cb = shutdown_cb
 
     @method()
-    def ReadValue(self, options: 'a{sv}') -> 'ay':  # type: ignore[name-defined]  # noqa: F821
-        print("Read request")
-        return json.dumps(dataManager.get_secrets()).encode()
-
+    def ReadValue(self, options: 'a{sv}') -> 'ay':
+        data = json.dumps(dataManager.get_secrets()).encode()
+        offset = options.get('offset')
+        if offset is not None:
+            data = data[offset.value:]
+        return data
+    
     @method()
     def WriteValue(self, value: 'ay', options: 'a{sv}'):  # type: ignore[override, name-defined]  # noqa: F821
         self.value = bytes(value)
