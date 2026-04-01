@@ -105,6 +105,7 @@ try:
 
     def shutdown_action():
         screenManager.clearAndSleep(epd)
+        time.sleep(1)
         os.system("shutdown -h now")
 
     def run_ble():
