@@ -25,13 +25,13 @@ def set_iv(iv: str) -> None:
         raise ValueError("iv ne doit pas être vide.")
     JsonManager.update_value("iv", iv)
 
-def set_public(public: str) -> None:
+def concat_public(public: str) -> None:
     if not public:
         raise ValueError("public ne doit pas être vide.")
     current = get_secrets().get("public") or ""
     JsonManager.update_value("keypair.public", current + public)
 
-def set_private(private: str) -> None:
+def concat_private(private: str) -> None:
     if not private:
         raise ValueError("private ne doit pas être vide.")
     current = get_secrets().get("private") or ""

@@ -74,13 +74,13 @@ class Characteristic(ServiceInterface):
             print("Write iv:", list(payload.keys()))
             dataManager.set_iv(payload.get('data', ''))
 
-        if 'action' in payload and str(payload.get('action', '')) == "set_public": 
+        if 'action' in payload and str(payload.get('action', '')) == "concat_public": 
             print("Write public:", list(payload.keys()))
-            dataManager.set_public(payload.get('data', ''))
+            dataManager.concat_public(payload.get('data', ''))
         
-        if 'action' in payload and str(payload.get('action', '')) == "set_private": 
+        if 'action' in payload and str(payload.get('action', '')) == "concat_private": 
             print("Write private:", list(payload.keys()))
-            dataManager.set_private(payload.get('data', ''))
+            dataManager.concat_private(payload.get('data', ''))
 
         if 'action' in payload and str(payload.get('action', '')) == "set_hash_iv":
             print("Write hash iv:", list(payload.keys()))
