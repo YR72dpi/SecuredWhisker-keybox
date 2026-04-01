@@ -72,27 +72,27 @@ class Characteristic(ServiceInterface):
         # write iv, private & public keys
         if 'action' in payload and str(payload.get('action', '')) == "set_iv": 
             print("Write iv:", list(payload.keys()))
-            dataManager.set_iv(iv=str(payload.get('set_iv', '')))
+            dataManager.set_iv(payload.get('data', ''))
 
         if 'action' in payload and str(payload.get('action', '')) == "set_public": 
             print("Write public:", list(payload.keys()))
-            dataManager.set_public(str(payload.get('set_public', '')))
+            dataManager.set_public(payload.get('data', ''))
         
         if 'action' in payload and str(payload.get('action', '')) == "set_private": 
             print("Write private:", list(payload.keys()))
-            dataManager.set_private(private=str(payload.get('set_private', '')))
+            dataManager.set_private(payload.get('data', ''))
 
         if 'action' in payload and str(payload.get('action', '')) == "set_hash_iv":
             print("Write hash iv:", list(payload.keys()))
-            dataManager.set_hash_iv(iv=str(payload.get('set_hash_iv', '')))
+            dataManager.set_hash_iv(payload.get('data', ''))
 
         if 'action' in payload and str(payload.get('action', '')) == "set_hash_public":
             print("Write hash public:", list(payload.keys()))
-            dataManager.set_hash_public(public=str(payload.get('set_hash_public', '')))
+            dataManager.set_hash_public(payload.get('data', ''))
 
         if 'action' in payload and str(payload.get('action', '')) == "set_hash_private":
             print("Write hash private:", list(payload.keys()))
-            dataManager.set_hash_private(private=str(payload.get('set_hash_private', '')))
+            dataManager.set_hash_private(payload.get('data', ''))
 
         # shutdown the pi
         if 'action' in payload and str(payload.get('action', '')) == "shutdown": 
