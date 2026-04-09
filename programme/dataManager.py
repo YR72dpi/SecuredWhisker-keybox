@@ -21,17 +21,23 @@ def get_secrets() -> dict:
     }
 
 def set_iv(iv: str) -> None:
+    if get_initialized():
+        raise PermissionError("Impossible de modifier iv : déjà initialisé.")
     if not iv:
         raise ValueError("iv ne doit pas être vide.")
     JsonManager.update_value("iv", iv)
 
 def concat_public(public: str) -> None:
+    if get_initialized():
+        raise PermissionError("Impossible de modifier keypair.public : déjà initialisé.")
     if not public:
         raise ValueError("public ne doit pas être vide.")
     current = get_secrets().get("public") or ""
     JsonManager.update_value("keypair.public", current + public)
 
 def concat_private(private: str) -> None:
+    if get_initialized():
+        raise PermissionError("Impossible de modifier keypair.private : déjà initialisé.")
     if not private:
         raise ValueError("private ne doit pas être vide.")
     current = get_secrets().get("private") or ""
@@ -61,6 +67,7 @@ def verify_iv() -> bool:
     hashedIv = data.get("hash", {}).get("iv")
     if not iv or not hashedIv:
         return False
+    print("Hash iv: ", _md5(iv) == hashedIv)
     return _md5(iv) == hashedIv
 
 def verify_public() -> bool:
@@ -69,6 +76,7 @@ def verify_public() -> bool:
     hashedPublic = data.get("hash", {}).get("keypair", {}).get("public")
     if not public or not hashedPublic:
         return False
+    print("Hash public: ", _md5(public) == hashedPublic)
     return _md5(public) == hashedPublic
 
 def verify_private() -> bool:
@@ -77,5 +85,6 @@ def verify_private() -> bool:
     hashedPrivate = data.get("hash", {}).get("keypair", {}).get("private")
     if not private or not hashedPrivate:
         return False
+    print("Hash private: ", _md5(private) == hashedPrivate)
     return _md5(private) == hashedPrivate
 

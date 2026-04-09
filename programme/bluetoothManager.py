@@ -71,7 +71,7 @@ class Characteristic(ServiceInterface):
 
         # write iv, private & public keys
         if 'action' in payload and str(payload.get('action', '')) == "set_iv": 
-            print("Write iv:", list(payload.keys()))
+            print("Write iv:", payload.get('data', ''))
             dataManager.set_iv(payload.get('data', ''))
 
         if 'action' in payload and str(payload.get('action', '')) == "concat_public": 
@@ -93,6 +93,11 @@ class Characteristic(ServiceInterface):
         if 'action' in payload and str(payload.get('action', '')) == "set_hash_private":
             print("Write hash private:", list(payload.keys()))
             dataManager.set_hash_private(payload.get('data', ''))
+
+        if 'action' in payload and str(payload.get('action', '')) == "validate":
+            print("Validate hash")
+            if dataManager.verify_iv() and dataManager.verify_private() and dataManager.verify_public():
+                dataManager.set_initialized(True)
 
         # shutdown the pi
         if 'action' in payload and str(payload.get('action', '')) == "shutdown": 
