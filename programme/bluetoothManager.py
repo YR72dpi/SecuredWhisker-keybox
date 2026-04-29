@@ -1,377 +1,59 @@
+#!/usr/bin/python
+# -*- coding:utf-8 -*-
 import sys
 import os
 libdir = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'lib')
 if os.path.exists(libdir):
     sys.path.append(libdir)
-    
+
 import asyncio
-import json
-import struct
-from typing import Callable, Optional
-import dataManager
-from dbus_next.aio import MessageBus
-from dbus_next.service import ServiceInterface, method, dbus_property
-from dbus_next.constants import PropertyAccess, BusType, MessageType
-from dbus_next import Message
-from dbus_next import Variant
-
 import logging
+import time
+from typing import Optional
 
-BLUEZ = 'org.bluez'
-ADAPTER = '/org/bluez/hci0'
-GATT_MANAGER = 'org.bluez.GattManager1'
-LE_ADV_MANAGER = 'org.bluez.LEAdvertisingManager1'
-AGENT_MANAGER = 'org.bluez.AgentManager1'
+import display
+import gatt
+import agent
+from constants import (
+    BLUEZ, ADAPTER, GATT_MANAGER, LE_ADV_MANAGER,
+    APP_PATH, SERVICE_PATH, CHAR_PATH, ADV_PATH,
+    LOCAL_NAME,
+)
+from dbus_next.aio import MessageBus
+from dbus_next.constants import BusType, MessageType
+from dbus_next import Message
 
-APP_PATH = '/com/example'
-SERVICE_PATH = f'{APP_PATH}/service0'
-CHAR_PATH = f'{SERVICE_PATH}/char0'
-ADV_PATH = f'{APP_PATH}/advertisement0'
-AGENT_PATH = f'{APP_PATH}/agent0'
-LOCAL_NAME = 'SW-Keybox'
-CHUNK_SIZE = 490  # octets de données utiles par paquet BLE
-SERVICE_UUID = '12345678-1234-5678-1234-56789abcdef0'
-CHAR_UUID = '12345678-1234-5678-1234-56789abcdef1'
 
-# ======================
-# PROTOCOLE BLE
-# ======================
-# ReadValue : retourne toujours {"initialized", "iv", "public", "private"}
-#
-# WriteValue — écriture (JSON brut) :
-#   {"iv": "...", "public": "...", "private": "..."}  → écriture des secrets (seulement si initialized == false)
-
-# ======================
-# GATT CHARACTERISTIC
-# ======================
-
-class Characteristic(ServiceInterface):
-    def __init__(self, service_path: str, shutdown_cb=None):
-        super().__init__('org.bluez.GattCharacteristic1')
-        self._service_path = service_path
-        self.value = b'Hello BLE'
-        self.notifying = False
-        self.shutdown_cb = shutdown_cb
-        self._bus = None  # injecté après connexion au bus
-
-    @method()
-    def ReadValue(self, options: 'a{sv}') -> 'ay':
-        data = json.dumps(dataManager.get_secrets()).encode()
-        offset = options.get('offset')
-        if offset is not None:
-            data = data[offset.value:]
-        return data
-    
-    @method()
-    def WriteValue(self, value: 'ay', options: 'a{sv}'):  # type: ignore[override, name-defined]  # noqa: F821
-        self.value = bytes(value)
-        if not self.value:
-            print("WriteValue: payload vide")
-            # return
-        
-        payload = json.loads(self.value.decode('utf-8'))
-        logging.debug(payload)
-
-        # write iv, private & public keys
-        if 'action' in payload and str(payload.get('action', '')) == "set_iv": 
-            print("Write iv:", payload.get('data', ''))
-            dataManager.set_iv(payload.get('data', ''))
-
-        if 'action' in payload and str(payload.get('action', '')) == "concat_public": 
-            print("Write public:", list(payload.keys()))
-            dataManager.concat_public(payload.get('data', ''))
-        
-        if 'action' in payload and str(payload.get('action', '')) == "concat_private": 
-            print("Write private:", list(payload.keys()))
-            dataManager.concat_private(payload.get('data', ''))
-
-        if 'action' in payload and str(payload.get('action', '')) == "set_hash_iv":
-            print("Write hash iv:", list(payload.keys()))
-            dataManager.set_hash_iv(payload.get('data', ''))
-
-        if 'action' in payload and str(payload.get('action', '')) == "set_hash_public":
-            print("Write hash public:", list(payload.keys()))
-            dataManager.set_hash_public(payload.get('data', ''))
-
-        if 'action' in payload and str(payload.get('action', '')) == "set_hash_private":
-            print("Write hash private:", list(payload.keys()))
-            dataManager.set_hash_private(payload.get('data', ''))
-
-        if 'action' in payload and str(payload.get('action', '')) == "validate":
-            print("Validate hash")
-            if dataManager.verify_iv() and dataManager.verify_private() and dataManager.verify_public():
-                dataManager.set_hash_all_corresponding(True)
-                self._schedule_notify_all()
-        
-        if 'action' in payload and str(payload.get('action', '')) == "fix":
-            print("Fix data")
-            dataManager.set_initialized(True)
-            self._schedule_notify_all()
-
-        if 'action' in payload and str(payload.get('action', '')) == "read":
-            print("Read requested via notify")
-            self._schedule_notify_all()
-
-        # shutdown the pi
-        if 'action' in payload and str(payload.get('action', '')) == "shutdown": 
-            print("shutdown")
-            self.shutdown_cb()
-
-        if 'action' in payload and str(payload.get('action', '')) == "reset":
-            print("Reset data")
-            dataManager.reset()
-
-    def _schedule_notify_all(self):
-        """Planifie l'envoi de toutes les données via notify (depuis un contexte sync)."""
-        if self.notifying and self._bus is not None:
-            asyncio.ensure_future(self._notify_all_data())
-
-    async def _notify_all_data(self):
-        """Envoie data.json complet en chunks BLE via PropertiesChanged."""
-        if not self.notifying or self._bus is None:
-            return
-        raw = json.dumps(dataManager.get_all_data(), ensure_ascii=False).encode('utf-8')
-        chunks = [raw[i:i + CHUNK_SIZE] for i in range(0, len(raw), CHUNK_SIZE)]
-        total = len(chunks)
-        print(f"Notify: envoi de {len(raw)} octets en {total} chunk(s)")
-        for i, chunk in enumerate(chunks):
-            if not self.notifying:
-                break
-            # En-tête 4 octets : index (uint16 BE) + total (uint16 BE)
-            packet = struct.pack('>HH', i, total) + chunk
-            print(f"Notify: chunk {i + 1}/{total} ({len(packet)} octets)")
-            self._send_notify(packet)
-            await asyncio.sleep(0.05)  # laisser le temps au stack BLE
-
-    def _send_notify(self, data: bytes):
-        """Émet un signal PropertiesChanged pour déclencher une notification BLE."""
-        self.value = bytes(data)
-        msg = Message(
-            message_type=MessageType.SIGNAL,
-            path=CHAR_PATH,
-            interface='org.freedesktop.DBus.Properties',
-            member='PropertiesChanged',
-            signature='sa{sv}as',
-            body=[
-                'org.bluez.GattCharacteristic1',
-                {'Value': Variant('ay', bytes(data))},
-                [],
-            ],
-        )
-        self._bus.send(msg)
-
-    @method()
-    def StartNotify(self):
-        self.notifying = True
-        print("Notifications enabled")
-
-    @method()
-    def StopNotify(self):
-        self.notifying = False
-        print("Notifications disabled")
-
-    @dbus_property(access=PropertyAccess.READ)
-    def UUID(self) -> 's':  # type: ignore[name-defined]  # noqa: F821
-        return CHAR_UUID
-
-    @dbus_property(access=PropertyAccess.READ)
-    def Service(self) -> 'o':  # type: ignore[name-defined]  # noqa: F821
-        return self._service_path
-
-    @dbus_property(access=PropertyAccess.READ)
-    def Value(self) -> 'ay':  # type: ignore[name-defined]  # noqa: F821
-        return self.value
-
-    @dbus_property(access=PropertyAccess.READ)
-    def Notifying(self) -> 'b':  # type: ignore[name-defined]  # noqa: F821
-        return self.notifying
-
-    @dbus_property(access=PropertyAccess.READ)
-    def Flags(self) -> 'as':  # type: ignore[name-defined]  # noqa: F821
-        # Les flags encrypt-* forcent un lien chiffré, donc un pairing/bonding côté client.
-        return ['read', 'write', 'notify']
-        # return ['read', 'write', 'notify', 'encrypt-read', 'encrypt-write']
-
-    @dbus_property(access=PropertyAccess.READ)
-    def Descriptors(self) -> 'ao':  # type: ignore[name-defined]  # noqa: F821
-        return []
+logging.basicConfig(level=logging.DEBUG)
 
 
 # ======================
-# GATT SERVICE
+# CONNECTION WATCHER
 # ======================
-
-class Service(ServiceInterface):
-    def __init__(self):
-        super().__init__('org.bluez.GattService1')
-
-    @dbus_property(access=PropertyAccess.READ)
-    def UUID(self) -> 's': # type: ignore[name-defined]  # noqa: F821
-        return SERVICE_UUID
-
-    @dbus_property(access=PropertyAccess.READ)
-    def Primary(self) -> 'b': # type: ignore[name-defined]  # noqa: F821
-        return True
-
-    @dbus_property(access=PropertyAccess.READ)
-    def Includes(self) -> 'ao': # type: ignore[name-defined]  # noqa: F821
-        return []
-
-
-class Application(ServiceInterface):
-    def __init__(self, service: Service, characteristic: Characteristic):
-        super().__init__('org.freedesktop.DBus.ObjectManager')
-        self._service = service
-        self._characteristic = characteristic
-
-    @method()
-    def GetManagedObjects(self) -> 'a{oa{sa{sv}}}':  # type: ignore[name-defined]  # noqa: F821
-        return {
-            SERVICE_PATH: {
-                'org.bluez.GattService1': {
-                    'UUID': Variant('s', self._service.UUID),
-                    'Primary': Variant('b', self._service.Primary),
-                    'Includes': Variant('ao', self._service.Includes),
-                }
-            },
-            CHAR_PATH: {
-                'org.bluez.GattCharacteristic1': {
-                    'UUID': Variant('s', self._characteristic.UUID),
-                    'Service': Variant('o', self._characteristic.Service),
-                    'Flags': Variant('as', self._characteristic.Flags),
-                    'Value': Variant('ay', self._characteristic.Value),
-                    'Notifying': Variant('b', self._characteristic.Notifying),
-                    'Descriptors': Variant('ao', self._characteristic.Descriptors),
-                }
-            },
-        }
-
-
-# ======================
-# ADVERTISEMENT
-# ======================
-
-class Advertisement(ServiceInterface):
-    def __init__(self):
-        super().__init__('org.bluez.LEAdvertisement1')
-
-    @dbus_property(access=PropertyAccess.READ)
-    def Type(self) -> 's': # type: ignore[name-defined]  # noqa: F821
-        return 'peripheral'
-
-    @dbus_property(access=PropertyAccess.READ)
-    def ServiceUUIDs(self) -> 'as': # type: ignore[name-defined]  # noqa: F821
-        return [SERVICE_UUID]
-
-    @dbus_property(access=PropertyAccess.READ)
-    def LocalName(self) -> 's': # type: ignore[name-defined]  # noqa: F821
-        return LOCAL_NAME
-
-    @dbus_property(access=PropertyAccess.READ)
-    def Includes(self) -> 'as':  # type: ignore[name-defined]  # noqa: F821
-        return ['tx-power']
-
-    @method()
-    def Release(self):
-        print('Advertisement released')
-
-
-# ======================
-# PAIRING AGENT
-# ======================
-
-class PairingAgent(ServiceInterface):
-    def __init__(self, display_cb: Optional[Callable[[str], None]] = None):
-        super().__init__('org.bluez.Agent1')
-        self._display_cb = display_cb
-
-    def _display(self, message: str):
-        if self._display_cb is not None:
-            try:
-                self._display_cb(message)
-            except Exception:
-                pass
-
-    @method()
-    def Release(self):
-        print('Agent released')
-
-    @method()
-    def DisplayPasskey(self, device: 'o', passkey: 'u', entered: 'q'):  # type: ignore[name-defined]  # noqa: F821
-        print('DisplayPasskey', device, passkey, entered)
-        # Le passkey est généralement un entier (0..999999). On l'affiche sur 6 chiffres.
-        self._display(f"Code BLE: {int(passkey):06d}")
-
-    @method()
-    def RequestConfirmation(self, device: 'o', passkey: 'u'):  # type: ignore[name-defined]  # noqa: F821
-        # Si BlueZ utilise le mode "numeric comparison", accepter automatiquement.
-        print('RequestConfirmation', device, passkey)
-        try:
-            self._display(f"Code BLE: {int(passkey):06d}")
-        except Exception:
-            pass
-        return
-
-    @method()
-    def AuthorizeService(self, device: 'o', uuid: 's'):  # type: ignore[name-defined]  # noqa: F821
-        print('AuthorizeService', device, uuid)
-        return
-
-    @method()
-    def Cancel(self):
-        print('Agent request cancelled')
-
-
-async def register_pairing_agent(
-    bus: MessageBus,
-    capability: str = 'DisplayYesNo',
-    display_cb: Optional[Callable[[str], None]] = None,
-):
-    """Enregistre un agent BlueZ (affichage du code de vérification sur le device).
-
-    capability (BlueZ): 'DisplayOnly' | 'DisplayYesNo' | 'KeyboardOnly' | 'NoInputNoOutput' | 'KeyboardDisplay'
-    """
-    agent = PairingAgent(display_cb=display_cb)
-    bus.export(AGENT_PATH, agent)
-
-    introspection = await bus.introspect(BLUEZ, '/org/bluez')
-    obj = bus.get_proxy_object(BLUEZ, '/org/bluez', introspection)
-    agent_mgr = obj.get_interface(AGENT_MANAGER)
-
-    print(f"Registering Agent (capability={capability}) at {AGENT_PATH}...")
-    await agent_mgr.call_register_agent(AGENT_PATH, capability)
-    await agent_mgr.call_request_default_agent(AGENT_PATH)
-    print("Pairing Agent ready")
-
 
 def _device_path_to_mac(device_path: str) -> Optional[str]:
-    # /org/bluez/hci0/dev_XX_XX_XX_XX_XX_XX -> XX:XX:XX:XX:XX:XX
     if not device_path:
         return None
     marker = '/dev_'
     if marker not in device_path:
         return None
-    tail = device_path.split(marker, 1)[1]
-    mac = tail.replace('_', ':')
-    return mac
+    return device_path.split(marker, 1)[1].replace('_', ':')
 
 
-async def _install_connection_watcher(bus: MessageBus, status_cb: Optional[Callable[[str], None]]):
-    if status_cb is None:
-        return
-
-    # S'abonner aux signaux PropertiesChanged de BlueZ (Device1)
-    match_rule = "type='signal',sender='org.bluez',interface='org.freedesktop.DBus.Properties',member='PropertiesChanged'"
-    await bus.call(
-        Message(
-            destination='org.freedesktop.DBus',
-            path='/org/freedesktop/DBus',
-            interface='org.freedesktop.DBus',
-            member='AddMatch',
-            signature='s',
-            body=[match_rule],
-        )
+async def _install_connection_watcher(bus: MessageBus, char=None):
+    match_rule = (
+        "type='signal',sender='org.bluez',"
+        "interface='org.freedesktop.DBus.Properties',"
+        "member='PropertiesChanged'"
     )
+    await bus.call(Message(
+        destination='org.freedesktop.DBus',
+        path='/org/freedesktop/DBus',
+        interface='org.freedesktop.DBus',
+        member='AddMatch',
+        signature='s',
+        body=[match_rule],
+    ))
 
     def handler(msg: Message):
         try:
@@ -386,92 +68,37 @@ async def _install_connection_watcher(bus: MessageBus, status_cb: Optional[Calla
             mac = _device_path_to_mac(msg.path)
 
             if 'Connected' in changed_props:
-                connected = bool(changed_props['Connected'].value)
-                if connected:
-                    status_cb(f"CONN: connected {mac or ''}".strip())
+                if bool(changed_props['Connected'].value):
+                    if char is not None:
+                        char.connected_mac = mac or ""
+                    display.show_connected(mac or "")
                 else:
-                    status_cb(f"CONN: disconnected {mac or ''}".strip())
+                    if char is not None:
+                        char.connected_mac = ""
+                    display.show_waiting_screen()
 
-            # Bonded passe à True une fois le pairing/bonding complètement validé
             if 'Bonded' in changed_props:
-                bonded = bool(changed_props['Bonded'].value)
-                if bonded:
-                    status_cb(f"BONDED: {mac or ''}".strip())
+                if bool(changed_props['Bonded'].value):
+                    display.show_key_status()
+                    display.show_connected(mac or "")
+
         except Exception:
-            # Ne jamais casser la boucle DBus
             return
 
     bus.add_message_handler(handler)
 
 
-async def start_ble_server(
-    *,
-    status_cb: Optional[Callable[[str], None]] = None,
-    display_cb: Optional[Callable[[str], None]] = None,
-    shutdown_cb: Optional[Callable[[], None]] = None,
-):
-    """Démarre le serveur BLE (GATT + advertisement) et reste actif.
-
-    - `status_cb`: messages d'étape (utile pour l'écran)
-    - `display_cb`: affichage du code de pairing (DisplayPasskey/RequestConfirmation)
-    """
-
-    def status(message: str):
-        print(message)
-        if status_cb is not None:
-            try:
-                status_cb(message)
-            except Exception:
-                pass
-
-    await initRaspberryPiBluetooth()
-    status("BLE: bus système…")
-    bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
-    await _install_connection_watcher(bus, status_cb)
-    await register_pairing_agent(bus, display_cb=display_cb)
-
-    service = Service()
-    char = Characteristic(SERVICE_PATH, shutdown_cb=shutdown_cb)
-    char._bus = bus  # permet l'envoi de notifications
-    adv = Advertisement()
-    app = Application(service, char)
-
-    bus.export(APP_PATH, app)
-    bus.export(SERVICE_PATH, service)
-    bus.export(CHAR_PATH, char)
-    bus.export(ADV_PATH, adv)
-
-    status("BLE: introspection adapter…")
-    introspection = await bus.introspect(BLUEZ, ADAPTER)
-    obj = bus.get_proxy_object(BLUEZ, ADAPTER, introspection)
-
-    gatt = obj.get_interface(GATT_MANAGER)
-    adv_manager = obj.get_interface(LE_ADV_MANAGER)
-
-    status("BLE: RegisterApplication…")
-    await asyncio.wait_for(gatt.call_register_application(APP_PATH, {}), timeout=15.0)
-    await asyncio.sleep(1)
-    status("BLE: RegisterAdvertisement…")
-    await asyncio.wait_for(adv_manager.call_register_advertisement(ADV_PATH, {}), timeout=15.0)
-
-    status(f"BLE: prêt ({LOCAL_NAME})")
-    await asyncio.get_running_loop().create_future()
-
-
 # ======================
-# MAIN
+# BLUETOOTH INIT
 # ======================
 
-async def initRaspberryPiBluetooth ():
+async def _init_bluetooth():
     os.system("systemctl stop bluetooth")
     os.system("pkill bluetoothd")
     os.system("btmgmt power off")
     os.system("btmgmt bredr off")
-
-    # Best effort: capacité d'E/S correspondant à DisplayYesNo
     os.system("btmgmt bondable on")
     os.system("btmgmt io-cap 1")  # DisplayYesNo
-
     os.system("btmgmt le on")
     os.system("btmgmt power on")
     os.system("systemctl start bluetooth")
@@ -479,11 +106,64 @@ async def initRaspberryPiBluetooth ():
     os.system("bluetoothctl discoverable on")
     os.system("bluetoothctl pairable on")
 
+
+# ======================
+# BLE SERVER
+# ======================
+
+async def start_ble_server():
+    display.launchingPleaseWait()
+    await _init_bluetooth()
+
+    print("BLE: bus système…")
+    bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
+    await agent.register_pairing_agent(bus)
+
+    service  = gatt.Service()
+    char     = gatt.Characteristic(SERVICE_PATH, shutdown_cb=display.shutdown)
+    await _install_connection_watcher(bus, char)
+    char._bus = bus
+    adv      = gatt.Advertisement()
+    app      = gatt.Application(service, char)
+
+    bus.export(APP_PATH,     app)
+    bus.export(SERVICE_PATH, service)
+    bus.export(CHAR_PATH,    char)
+    bus.export(ADV_PATH,     adv)
+
+    print("BLE: introspection adapter…")
+    introspection = await bus.introspect(BLUEZ, ADAPTER)
+    obj = bus.get_proxy_object(BLUEZ, ADAPTER, introspection)
+
+    gatt_mgr    = obj.get_interface(GATT_MANAGER)
+    adv_manager = obj.get_interface(LE_ADV_MANAGER)
+
+    print("BLE: RegisterApplication…")
+    await asyncio.wait_for(gatt_mgr.call_register_application(APP_PATH, {}), timeout=15.0)
+    await asyncio.sleep(1)
+    print("BLE: RegisterAdvertisement…")
+    await asyncio.wait_for(adv_manager.call_register_advertisement(ADV_PATH, {}), timeout=15.0)
+
+    print(f"BLE: prêt ({LOCAL_NAME})")
+    display.show_waiting_screen()
+    await asyncio.get_running_loop().create_future()
+
+
+# ======================
+# ENTRY POINT
+# ======================
+
 async def main():
-    # Important: sur téléphone, le code affiché lors du pairing peut être généré par la procédure BLE.
-    # display_cb permet d'afficher le même code côté Raspberry (console / écran).
-    await start_ble_server(status_cb=None, display_cb=print)
+    display.init_hardware()
+    try:
+        await start_ble_server()
+    finally:
+        # S'exécute que ce soit un Ctrl+C (CancelledError) ou une erreur
+        display.teardown()
 
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
