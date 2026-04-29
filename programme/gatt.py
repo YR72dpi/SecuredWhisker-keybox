@@ -36,7 +36,7 @@ class Characteristic(ServiceInterface):
         self.connected_mac: str = ""  # MAC de l'appareil connecté
 
     @method()
-    def ReadValue(self, options: 'a{sv}') -> 'ay':
+    def ReadValue(self, options: 'a{sv}') -> 'ay':  # type: ignore[override, name-defined]  # noqa: F821
         data = json.dumps(dataManager.get_secrets()).encode()
         offset = options.get('offset')
         if offset is not None:
