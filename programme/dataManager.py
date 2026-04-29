@@ -1,5 +1,7 @@
 import JsonManager
 import hashlib
+import json
+from pathlib import Path
 
 
 def _md5(value: str) -> str:
@@ -95,3 +97,9 @@ def verify_private() -> bool:
     print("Hash private: ", _md5(private) == hashedPrivate)
     return _md5(private) == hashedPrivate
 
+def reset() -> None:
+    if get_initialized():
+        raise PermissionError("Impossible de reinitialiser : deja initialisé")
+    example_path = Path(__file__).resolve().parent / "data.example.json"
+    example_data = json.loads(example_path.read_text(encoding="utf-8"))
+    JsonManager._atomic_write_json(JsonManager._data_json_path(), example_data)

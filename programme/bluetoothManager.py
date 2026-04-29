@@ -117,6 +117,10 @@ class Characteristic(ServiceInterface):
             print("shutdown")
             self.shutdown_cb()
 
+        if 'action' in payload and str(payload.get('action', '')) == "reset":
+            print("Reset data")
+            dataManager.reset()
+
     def _schedule_notify_all(self):
         """Planifie l'envoi de toutes les données via notify (depuis un contexte sync)."""
         if self.notifying and self._bus is not None:
