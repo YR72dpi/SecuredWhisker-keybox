@@ -112,7 +112,7 @@ async def _init_bluetooth():
 # ======================
 
 async def start_ble_server():
-    display.launchingPleaseWait()
+    display.show_launching()
     await _init_bluetooth()
 
     print("BLE: bus système…")

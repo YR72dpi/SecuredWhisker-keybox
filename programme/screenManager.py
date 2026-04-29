@@ -1,103 +1,139 @@
 import os
-fontdir = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'font')
-picdir = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'pics')
-from PIL import Image, ImageDraw, ImageFont
 import logging
+import threading
 import time
+from PIL import Image, ImageDraw, ImageFont
 
-def printText(epd, text, x, y):
-    logging.info("Affiche du texte sans clignotement pour les mises à jour")
-    """Affiche du texte sans clignotement pour les mises à jour"""
+# ─── Paths ────────────────────────────────────────────────────────────────────
 
-    clearNoFlash(epd)
-    time.sleep(1)
+_FONT_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "font", "Font.ttc"
+)
+_PIC_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "pics"
+)
 
-    image = Image.new('1', (epd.height, epd.width), 255)  # 255: blanc, 0: noir
-    draw = ImageDraw.Draw(image)
-    font15 = ImageFont.truetype(os.path.join(fontdir, 'Font.ttc'), 15)
-    draw.text((x, y), text, font=font15, fill=0)  # fill=0 pour noir
-    
-    buffer = epd.getbuffer(image)
-    # Envoyer directement sans reset
-    epd.send_command(0x24)  # WRITE_RAM
-    epd.send_data2(buffer)
-    epd.TurnOnDisplayPart()  # Mise à jour rapide
+# ─── Refresh throttle ─────────────────────────────────────────────────────────
+# e-Paper partial refresh requires ≥ 600 ms between two consecutive updates.
+# Calling faster causes text ghosting and overlap.
+
+_MIN_REFRESH_INTERVAL = 0.6   # seconds
+_last_refresh_time    = 0.0
+_refresh_lock         = threading.Lock()
 
 
-def printLines(epd, lines, x=5, y=5, fontSize=15, lineSpacing=3, clearBefore=True, sleepAfterClear=1):
-    """Affiche plusieurs lignes de texte sur un seul écran.
+def _acquire_refresh_slot(blocking: bool = False, hold_extra: float = 0.0) -> bool:
+    """Claim the next refresh slot.
 
     Args:
-        epd: Instance du driver e-paper.
-        lines: Tableau (list/tuple) de lignes (str) à afficher.
-        x, y: Position du coin haut-gauche du bloc texte.
-        fontSize: Taille de la police.
-        lineSpacing: Espacement (en pixels) entre les lignes.
-        clearBefore: Si True, efface l'écran sans clignotement avant d'écrire.
-        sleepAfterClear: Pause (secondes) après effacement, pour stabiliser l'affichage.
+        blocking:   If True, spin-wait until the display is ready.
+                    Only call from a dedicated thread — never from asyncio.
+        hold_extra: Extra seconds to delay future refreshes after this one.
+                    Useful for screens the user needs time to read.
+
+    Returns:
+        True if the slot was claimed, False if not ready and blocking=False.
     """
-    logging.info("Affiche plusieurs lignes de texte (mise à jour partielle)")
+    global _last_refresh_time
+    while True:
+        with _refresh_lock:
+            if time.monotonic() - _last_refresh_time >= _MIN_REFRESH_INTERVAL:
+                _last_refresh_time = time.monotonic() + hold_extra
+                return True
+        if not blocking:
+            return False
+        time.sleep(0.05)  # wait outside the lock to let other threads through
 
 
-    if lines is None:
-        lines = []
+# ─── Low-level helpers ────────────────────────────────────────────────────────
 
-    if clearBefore:
-        clearNoFlash(epd)
-        if sleepAfterClear > 0:
-            time.sleep(sleepAfterClear)
+def _send_partial(epd, image: Image.Image) -> None:
+    """Push an image to the display via the official partial-update sequence.
 
-    image = Image.new('1', (epd.height, epd.width), 255)  # 255: blanc, 0: noir
-    draw = ImageDraw.Draw(image)
-    font = ImageFont.truetype(os.path.join(fontdir, 'Font.ttc'), int(fontSize))
+    Uses displayPartial_Wait() which:
+      - does a soft SPI reset so partial-update registers are correctly set
+      - writes the full framebuffer to RAM
+      - calls TurnOnDisplayPart_Wait(), which waits for the BUSY pin before
+        returning — preventing the "invisible screen" caused by back-to-back
+        SPI commands while the display is still refreshing.
+    """
+    epd.displayPartial_Wait(epd.getbuffer(image))
 
-    try:
-        bbox = font.getbbox("Ay")
-        logging.info(bbox)
-        lineHeight = (bbox[3] - bbox[1])
-    except Exception:
-        lineHeight = font.getsize("Ay")[1]
 
-    cursorY = int(y)
-    for line in lines:
-        if line is None:
-            line = ""
-        line = str(line)
-        if cursorY >= epd.width:
-            break
-        draw.text((int(x), cursorY), line, font=font, fill=0)
-        cursorY += lineHeight + int(lineSpacing)
+def _blank_image(epd) -> Image.Image:
+    """Return a white (blank) image sized for this display."""
+    return Image.new("1", (epd.height, epd.width), 255)
 
-    buffer = epd.getbuffer(image)
-    epd.send_command(0x24)  # WRITE_RAM
-    epd.send_data2(buffer)
-    epd.TurnOnDisplayPart()
 
-def clearNoFlash(epd):
-    logging.info("Efface l'écran sans aucun clignotement")
-    """Efface l'écran sans aucun clignotement"""
-    image = Image.new('1', (epd.height, epd.width), 255)  # 255: blanc
-    buffer = epd.getbuffer(image)
-    
-    # Envoyer directement les données sans reset
-    epd.send_command(0x24)  # WRITE_RAM
-    epd.send_data2(buffer)
-    epd.TurnOnDisplayPart()  # Mise à jour rapide sans attente
+# ─── Public API ───────────────────────────────────────────────────────────────
 
-def clearAndSleep(epd):
-    clearNoFlash(epd)
+def clear(epd) -> None:
+    """Erase the screen (white) using the partial-update sequence."""
+    _send_partial(epd, _blank_image(epd))
+
+
+def clear_and_sleep(epd) -> None:
+    """Show the logo image, then put the display into sleep mode."""
+    clear(epd)
     time.sleep(1)
-    """Applique une image blanche neutre puis éteint l'écran"""
-    image = Image.open(os.path.join(picdir, "logo.bmp"))  # 255: blanc
-    buffer = epd.getbuffer(image)
-    # Effacer sans clignotement avant de dormir
-    epd.send_command(0x24)  # WRITE_RAM
-    epd.send_data2(buffer)
-    epd.TurnOnDisplayPart()
+    logo = Image.open(os.path.join(_PIC_DIR, "logo.bmp"))
+    _send_partial(epd, logo)
     epd.sleep()
 
-def showImage (epd, fileName):
-    image = Image.open(os.path.join(picdir, fileName))
-    epd.displayPartBaseImage(epd.getbuffer(image))
-    DrawImage = ImageDraw.Draw(image)
-    epd.init(epd.PART_UPDATE)
+
+def print_lines(
+    epd,
+    lines,
+    *,
+    x: int = 5,
+    y: int = 5,
+    font_size: int = 15,
+    line_spacing: int = 3,
+    force: bool = False,
+    hold_extra: float = 0.0,
+) -> bool:
+    """Render one or more lines of text on the display.
+
+    Each call sends a complete white framebuffer with text to the e-Paper via
+    displayPartial_Wait(), which waits for the BUSY pin before returning.
+    No separate clear step is needed.
+
+    Args:
+        epd:          e-Paper driver instance.
+        lines:        Sequence of strings to display (one per line).
+        x, y:         Top-left corner of the text block, in pixels.
+        font_size:    Font size in points.
+        line_spacing: Extra vertical pixels between lines.
+        force:        If True, spin-wait until the display is ready.
+                      Call only from a worker thread, never from asyncio.
+                      If False (default), skip silently when still busy.
+        hold_extra:   Seconds to reserve after this update (implies force=True).
+
+    Returns:
+        True if the screen was updated, False if skipped.
+    """
+    if not _acquire_refresh_slot(blocking=force or hold_extra > 0, hold_extra=hold_extra):
+        logging.debug("print_lines: display busy, skipping update")
+        return False
+
+    # No separate clear() needed: image already has a white background.
+    # A single displayPartial_Wait() call replaces the full screen content.
+    image = _blank_image(epd)
+    draw  = ImageDraw.Draw(image)
+    font  = ImageFont.truetype(_FONT_PATH, font_size)
+
+    try:
+        line_height = font.getbbox("Ay")[3] - font.getbbox("Ay")[1]
+    except AttributeError:  # Pillow < 9.2
+        line_height = font.getsize("Ay")[1]
+
+    cursor_y = y
+    for line in (lines or []):
+        if cursor_y >= epd.width:
+            break
+        draw.text((x, cursor_y), str(line) if line is not None else "", font=font, fill=0)
+        cursor_y += line_height + line_spacing
+
+    _send_partial(epd, image)
+    logging.info("print_lines: rendered %d line(s)", len(lines) if lines else 0)
+    return True

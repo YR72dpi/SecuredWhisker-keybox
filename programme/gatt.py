@@ -68,7 +68,7 @@ class Characteristic(ServiceInterface):
                 _dispatch[action]()
                 if not self._transfer_in_progress:
                     self._transfer_in_progress = True
-                    display.showMessage("Transfer in progress...")
+                    display.show_message("Transfer in progress...")
 
         # --- Étapes finales : mise à jour écran une seule fois ---
         elif action == "validate":
@@ -80,7 +80,7 @@ class Characteristic(ServiceInterface):
                 display.show_connected(self.connected_mac)
                 self._schedule_notify_all()
             else:
-                display.showMessage("Validation failed!")
+                display.show_message("Validation failed!")
 
         elif action == "fix":
             print("Fix data")
@@ -92,12 +92,12 @@ class Characteristic(ServiceInterface):
 
         elif action == "read":
             print("Read requested via notify")
-            display.showMessage("Sending data...")
+            display.show_message("Sending data...")
             self._schedule_notify_all()
 
         elif action == "shutdown":
             print("shutdown")
-            display.showMessage("Shutdown...")
+            display.show_message("Shutdown...")
             if self.shutdown_cb:
                 self.shutdown_cb()
 
