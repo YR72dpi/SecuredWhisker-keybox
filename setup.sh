@@ -8,10 +8,10 @@ sudo apt install python3-smbus
 
 sudo pip3 install spidev
 
-mv ./programme/data.example.json ./programme/data.json
+cp ./programme/data.example.json ./programme/data.json
 sudo chmod 700 ./programme/data.json
 
-sudo mv ./sw-keybox.service /etc/systemd/system/sw-keybox.service
+sudo cp ./sw-keybox.service /etc/systemd/system/sw-keybox.service
 sudo chown root:root /etc/systemd/system/sw-keybox.service
 sudo chmod 755 /etc/systemd/system/sw-keybox.service
 
