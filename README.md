@@ -1,3 +1,10 @@
+```
+Todo :
+    - secure reset of the keybox
+    - Get back private key on browser form keybox
+```
+
+
 # Secured Whisker KeyBox (SW-KeyBox)
 
 > A hardware key vault for [SecuredWhisker](https://github.com/YR72dpi/SecuredWhisker) — your encryption keys belong to you, not your browser.
