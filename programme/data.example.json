@@ -6,6 +6,7 @@
         "private": null
     },
     "hash": {
+        "allHashCorresponding" : false,
         "iv": null,
         "keypair": {
             "public": null,

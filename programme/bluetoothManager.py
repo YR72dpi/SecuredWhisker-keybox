@@ -6,6 +6,7 @@ if os.path.exists(libdir):
     
 import asyncio
 import json
+import struct
 from typing import Callable, Optional
 import dataManager
 from dbus_next.aio import MessageBus
@@ -28,6 +29,7 @@ CHAR_PATH = f'{SERVICE_PATH}/char0'
 ADV_PATH = f'{APP_PATH}/advertisement0'
 AGENT_PATH = f'{APP_PATH}/agent0'
 LOCAL_NAME = 'SW-Keybox'
+CHUNK_SIZE = 490  # octets de données utiles par paquet BLE
 SERVICE_UUID = '12345678-1234-5678-1234-56789abcdef0'
 CHAR_UUID = '12345678-1234-5678-1234-56789abcdef1'
 
@@ -50,6 +52,7 @@ class Characteristic(ServiceInterface):
         self.value = b'Hello BLE'
         self.notifying = False
         self.shutdown_cb = shutdown_cb
+        self._bus = None  # injecté après connexion au bus
 
     @method()
     def ReadValue(self, options: 'a{sv}') -> 'ay':
@@ -97,12 +100,61 @@ class Characteristic(ServiceInterface):
         if 'action' in payload and str(payload.get('action', '')) == "validate":
             print("Validate hash")
             if dataManager.verify_iv() and dataManager.verify_private() and dataManager.verify_public():
-                dataManager.set_initialized(True)
+                dataManager.set_hash_all_corresponding(True)
+                self._schedule_notify_all()
+        
+        if 'action' in payload and str(payload.get('action', '')) == "fix":
+            print("Fix data")
+            dataManager.set_initialized(True)
+            self._schedule_notify_all()
+
+        if 'action' in payload and str(payload.get('action', '')) == "read":
+            print("Read requested via notify")
+            self._schedule_notify_all()
 
         # shutdown the pi
         if 'action' in payload and str(payload.get('action', '')) == "shutdown": 
             print("shutdown")
             self.shutdown_cb()
+
+    def _schedule_notify_all(self):
+        """Planifie l'envoi de toutes les données via notify (depuis un contexte sync)."""
+        if self.notifying and self._bus is not None:
+            asyncio.ensure_future(self._notify_all_data())
+
+    async def _notify_all_data(self):
+        """Envoie data.json complet en chunks BLE via PropertiesChanged."""
+        if not self.notifying or self._bus is None:
+            return
+        raw = json.dumps(dataManager.get_all_data(), ensure_ascii=False).encode('utf-8')
+        chunks = [raw[i:i + CHUNK_SIZE] for i in range(0, len(raw), CHUNK_SIZE)]
+        total = len(chunks)
+        print(f"Notify: envoi de {len(raw)} octets en {total} chunk(s)")
+        for i, chunk in enumerate(chunks):
+            if not self.notifying:
+                break
+            # En-tête 4 octets : index (uint16 BE) + total (uint16 BE)
+            packet = struct.pack('>HH', i, total) + chunk
+            print(f"Notify: chunk {i + 1}/{total} ({len(packet)} octets)")
+            self._send_notify(packet)
+            await asyncio.sleep(0.05)  # laisser le temps au stack BLE
+
+    def _send_notify(self, data: bytes):
+        """Émet un signal PropertiesChanged pour déclencher une notification BLE."""
+        self.value = bytes(data)
+        msg = Message(
+            message_type=MessageType.SIGNAL,
+            path=CHAR_PATH,
+            interface='org.freedesktop.DBus.Properties',
+            member='PropertiesChanged',
+            signature='sa{sv}as',
+            body=[
+                'org.bluez.GattCharacteristic1',
+                {'Value': Variant('ay', bytes(data))},
+                [],
+            ],
+        )
+        self._bus.send(msg)
 
     @method()
     def StartNotify(self):
@@ -133,7 +185,7 @@ class Characteristic(ServiceInterface):
     @dbus_property(access=PropertyAccess.READ)
     def Flags(self) -> 'as':  # type: ignore[name-defined]  # noqa: F821
         # Les flags encrypt-* forcent un lien chiffré, donc un pairing/bonding côté client.
-        return ['read', 'write']
+        return ['read', 'write', 'notify']
         # return ['read', 'write', 'notify', 'encrypt-read', 'encrypt-write']
 
     @dbus_property(access=PropertyAccess.READ)
@@ -376,6 +428,7 @@ async def start_ble_server(
 
     service = Service()
     char = Characteristic(SERVICE_PATH, shutdown_cb=shutdown_cb)
+    char._bus = bus  # permet l'envoi de notifications
     adv = Advertisement()
     app = Application(service, char)
 

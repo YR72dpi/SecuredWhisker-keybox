@@ -5,6 +5,10 @@ import hashlib
 def _md5(value: str) -> str:
     return hashlib.md5(value.encode()).hexdigest()
 
+def get_all_data() -> dict:
+    """Retourne le contenu complet de data.json."""
+    return JsonManager.get_all_json()
+
 def get_initialized() -> bool:
     data = JsonManager.get_all_json()
     return data.get("initialized", False)
@@ -45,6 +49,9 @@ def concat_private(private: str) -> None:
 
 def set_initialized(value: bool) -> None:
     JsonManager.update_value("initialized", value)
+
+def set_hash_all_corresponding(value: bool) -> None:
+    JsonManager.update_value("hash.allHashCorresponding", value)
 
 def set_hash_iv(iv: str) -> None:
     if not iv:
