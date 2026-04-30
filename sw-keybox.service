@@ -1,6 +1,6 @@
 [Unit]
 Description=SW Keybox Main
-After=network.target
+After=bluetooth.target
 
 [Service]
 Type=simple
