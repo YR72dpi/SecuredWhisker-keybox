@@ -47,17 +47,60 @@ def _acquire_refresh_slot(blocking: bool = False, hold_extra: float = 0.0) -> bo
 
 # ─── Low-level helpers ────────────────────────────────────────────────────────
 
-def _send_partial(epd, image: Image.Image) -> None:
-    """Push an image to the display via the official partial-update sequence.
+# Last buffer sent to the display.  Used as the 0x26 "old frame" reference so
+# the SSD1680 XOR logic correctly clears pixels from the previous frame.
+# Initialised to all-white to match the post-Clear(0xFF) hardware state.
+_prev_buf: bytearray | None = None
 
-    Uses displayPartial_Wait() which:
-      - does a soft SPI reset so partial-update registers are correctly set
-      - writes the full framebuffer to RAM
-      - calls TurnOnDisplayPart_Wait(), which waits for the BUSY pin before
-        returning — preventing the "invisible screen" caused by back-to-back
-        SPI commands while the display is still refreshing.
+
+def _send_partial(epd, image: Image.Image) -> None:
+    """Push an image to the display using partial-update (no 010101 flash).
+
+    The SSD1680 XOR-compares RAM 0x26 (old frame) and RAM 0x24 (new frame).
+    Only pixels where XOR != 0 are refreshed:
+      - Pixel was black, now white : XOR = 0xFF → driven white  (old text erased) ✓
+      - Pixel was white, now black : XOR = 0xFF → driven black  (new text drawn)  ✓
+      - Unchanged pixels           : XOR = 0x00 → not re-driven (stays as-is)     ✓
+
+    0x26 is set to the ACTUAL previous frame (_prev_buf) so old text is cleared
+    before new text is drawn.  Using a static all-white baseline caused old
+    black pixels (previous text) to never be erased — producing overlap.
     """
-    epd.displayPartial_Wait(epd.getbuffer(image))
+    global _prev_buf
+
+    buf = epd.getbuffer(image)
+    linewidth = (epd.width // 8) if epd.width % 8 == 0 else (epd.width // 8 + 1)
+    white = bytearray([0xFF] * (linewidth * epd.height))
+
+    # Use the real previous frame as old-frame reference, or all-white on first call
+    prev = _prev_buf if _prev_buf is not None else white
+
+    # Small 1 ms reset pulse to re-enter partial-update register set
+    from TP_lib import epdconfig
+    epdconfig.digital_write(epd.reset_pin, 0)
+    epdconfig.delay_ms(1)
+    epdconfig.digital_write(epd.reset_pin, 1)
+
+    epd.send_command(0x3C)   # BorderWaveform
+    epd.send_data(0x80)
+    epd.send_command(0x11)   # Data entry mode
+    epd.send_data(0x03)
+    epd.SetWindow(0, 0, epd.width - 1, epd.height - 1)
+
+    # Write the previous frame so the controller knows what was on screen
+    epd.SetCursor(0, 0)
+    epd.send_command(0x26)
+    epd.send_data2(prev)
+
+    # Write the new frame
+    epd.SetCursor(0, 0)
+    epd.send_command(0x24)
+    epd.send_data2(buf)
+
+    epd.TurnOnDisplayPart_Wait()   # fast LUT, no 010101 flash
+
+    # Remember this frame for the next call
+    _prev_buf = bytearray(buf)
 
 
 def _blank_image(epd) -> Image.Image:
@@ -68,7 +111,7 @@ def _blank_image(epd) -> Image.Image:
 # ─── Public API ───────────────────────────────────────────────────────────────
 
 def clear(epd) -> None:
-    """Erase the screen (white) using the partial-update sequence."""
+    """Erase the screen (white) without flash."""
     _send_partial(epd, _blank_image(epd))
 
 
@@ -116,9 +159,9 @@ def print_lines(
         logging.debug("print_lines: display busy, skipping update")
         return False
 
-    # No separate clear() needed: image already has a white background.
-    # A single displayPartial_Wait() call replaces the full screen content.
-    image = _blank_image(epd)
+    # Draw text on a greyscale image so Pillow uses proper anti-aliasing,
+    # then threshold to pure black/white before sending to the display.
+    image = Image.new("L", (epd.height, epd.width), 255)  # greyscale, white
     draw  = ImageDraw.Draw(image)
     font  = ImageFont.truetype(_FONT_PATH, font_size)
 
@@ -133,6 +176,11 @@ def print_lines(
             break
         draw.text((x, cursor_y), str(line) if line is not None else "", font=font, fill=0)
         cursor_y += line_height + line_spacing
+
+    # Convert greyscale → 1-bit without dithering: any pixel darker than 200
+    # becomes solid black, everything else is white.  This avoids dithering
+    # noise (which looks grey/ghosted on e-ink) while preserving text quality.
+    image = image.point(lambda px: 0 if px < 200 else 255, "1")
 
     _send_partial(epd, image)
     logging.info("print_lines: rendered %d line(s)", len(lines) if lines else 0)

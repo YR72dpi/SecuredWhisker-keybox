@@ -47,6 +47,7 @@ class EPD:
         self.width = EPD_WIDTH
         self.height = EPD_HEIGHT
         epdconfig.address = 0x14
+        self._prev_buffer = None  # last buffer sent, used as 0x26 reference for partial updates
     
     FULL_UPDATE = 0
     PART_UPDATE = 1
@@ -307,11 +308,28 @@ class EPD:
         self.send_data(0x03)
 
         self.SetWindow(0, 0, self.width - 1, self.height - 1)
+
+        # Write the OLD frame to 0x26 (reference buffer for partial-update comparison).
+        # The display only refreshes pixels where 0x24 XOR 0x26 != 0.
+        # Without this, 0x26 stays uninitialised (all-zero = black) and black text
+        # pixels look identical in both buffers, so they are never refreshed and
+        # appear semi-transparent / grey.
         self.SetCursor(0, 0)
-        
-        self.send_command(0x24) # WRITE_RAM
+        self.send_command(0x26) # WRITE_RAM (previous frame reference)
+        if self._prev_buffer is not None:
+            self.send_data2(self._prev_buffer)
+        else:
+            # No previous frame known; assume all-white (post-Clear state)
+            linewidth = int(self.width / 8) if self.width % 8 == 0 else int(self.width / 8) + 1
+            self.send_data2(bytearray([0xFF] * (linewidth * self.height)))
+
+        self.SetCursor(0, 0)
+        self.send_command(0x24) # WRITE_RAM (new frame)
         self.send_data2(image)
         self.TurnOnDisplayPart_Wait()
+
+        # Remember this frame so the next call has a correct 0x26 reference
+        self._prev_buffer = bytearray(image)
 
     '''
     function : Refresh a base image
@@ -352,6 +370,8 @@ class EPD:
                 self.send_data(color)
                 
         self.TurnOnDisplay()
+        # Reset the reference buffer to match the cleared state
+        self._prev_buffer = bytearray([color] * (linewidth * self.height))
 
     '''
     function : Enter sleep mode
