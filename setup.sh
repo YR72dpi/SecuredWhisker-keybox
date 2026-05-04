@@ -18,3 +18,4 @@ sudo chmod 755 /etc/systemd/system/sw-keybox.service
 sudo systemctl daemon-reload
 sudo systemctl enable sw-keybox.service
 sudo systemctl start sw-keybox.service
+sudo reboot
