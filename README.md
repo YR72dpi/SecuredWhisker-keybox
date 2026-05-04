@@ -7,29 +7,36 @@ Todo :
 
 # Secured Whisker KeyBox (SW-KeyBox)
 
-> A hardware key vault for [SecuredWhisker](https://github.com/YR72dpi/SecuredWhisker) — your encryption keys belong to you, not your browser.
+> A hardware key vault for [SecuredWhisker](https://github.com/YR72dpi/SecuredWhisker) — your RSA private key belongs in your hands, not in your browser.
 
-SW-KeyBox is a compact, offline hardware security device that keeps your cryptographic keys physically in your hands. Built on a Raspberry Pi Zero 2W and communicating over Bluetooth Low Energy, it acts as a personal hardware key vault for end-to-end encrypted messaging — no cloud, no server middleman, no exposure.
+SW-KeyBox is a compact, offline hardware security device built as a physical companion to **SecuredWhisker**, the self-hosted end-to-end encrypted messaging platform. Built on a Raspberry Pi Zero 2W and communicating over Bluetooth Low Energy, it physically extracts your RSA private key from the browser and locks it inside a device only you possess — no cloud, no server middleman, no exposure.
 
 ---
 
 ## The Problem
 
-Today, encryption keys generated during sign-up are typically stored in plain text inside the browser's **IndexedDB** — readable by any malicious script or anyone with access to your machine.
+SecuredWhisker uses **RSA + AES hybrid encryption**: a unique RSA keypair is generated for each user at sign-up. The RSA private key is the single point of trust — every message you receive is decrypted with it.
 
-Transferring keys to a new browser requires routing them through a server, or copying sensitive data via QR codes and clipboard. **If your PC is compromised, your keys are compromised.**
+By default, that key lives in your browser's **IndexedDB**. As SecuredWhisker's own documentation warns:
 
-Worse, you may sometimes need to log in from a device you don't own or fully trust.
+> *"The RSA private key is stored in your browser. If you clean up 'Cookies and site data', this key, which is used to decrypt messages, will be lost."*
+
+Beyond the risk of accidental loss, this also means:
+- Any malicious script running in the browser context can read it
+- Anyone with physical or remote access to your machine can extract it
+- Logging in from an untrusted device immediately exposes your key
+
+**If your browser is compromised, every message you've ever received is compromised.**
 
 ## The Solution
 
-**SW-KeyBox physically removes your private keys from the browser** and locks them inside a dedicated hardware device that only you possess.
+**SW-KeyBox physically removes the RSA private key from SecuredWhisker's IndexedDB** and locks it inside a dedicated hardware device that only you carry.
 
-- Your keys are **AES-encrypted** before leaving the browser
-- They are **transferred over Bluetooth** directly to the SW-KeyBox
-- Decryption happens on **your terms** — unlock via a PIN + a 10-word mnemonic recovery phrase
-- Once stored, keys are **deleted from IndexedDB** — they can never be read from the browser again
-- When a message needs to be decrypted, the key is fetched **locally via Bluetooth**, never exposed to the network
+- The RSA private key is **AES-encrypted** client-side before leaving the browser
+- It is **transferred over Bluetooth Low Energy** directly to the SW-KeyBox
+- Once received, the key is **locked on the device** — it can never be overwritten
+- Every decryption request in SecuredWhisker fetches the key **locally via BLE**, never over the network
+- The key is **deleted from IndexedDB** after successful transfer — the browser holds nothing
 
 ---
 
@@ -48,11 +55,11 @@ Worse, you may sometimes need to log in from a device you don't own or fully tru
 
 ## Key Features
 
-- **Zero-trust browser model** — keys never live in your browser permanently
-- **Hardware isolation** — private keys reside only on a physical, air-gapped device you control
-- **Bluetooth pairing with PIN** — a secure pairing step ensures only your authorized device can connect
-- **AES encryption in transit** — keys are encrypted before leaving the browser, decrypted only on the device
-- **Mnemonic recovery system** — a 10-word recovery phrase protects your numeric password as a second factor
+- **Removes the browser's key exposure** — SecuredWhisker's RSA private key no longer lives in IndexedDB
+- **Hardware isolation** — the private key resides only on a physical device you control
+- **Immutable key store** — once initialized, no key material can be overwritten (enforced in firmware)
+- **BLE pairing with PIN** — only your explicitly paired device can connect and read key material
+- **AES encryption in transit** — the key is encrypted before leaving the browser, decrypted only on the device
 - **Low-power e-Paper UI** — always-visible status display with no backlight power draw
 - **Self-hosted & open** — no cloud dependency, no subscription, no telemetry
 
@@ -62,13 +69,11 @@ Worse, you may sometimes need to log in from a device you don't own or fully tru
 
 1. Install SW-KeyBox on your Raspberry Pi Zero 2W
 2. Pair your phone or computer via Bluetooth PIN
-3. Set a numeric password (A) to protect your private key
-4. Your browser encrypts the private key with A (AES) and sends it to the SW-KeyBox
-5. A 10-word mnemonic phrase is generated and shown to you — the phrase encrypts A
-6. Confirm the mnemonic, and your key is secured on the device
-7. The private key is **deleted from the browser's localStorage**
+3. SecuredWhisker encrypts your RSA private key with AES and transfers it to the SW-KeyBox over BLE
+4. The device locks the key store — no further writes are accepted
+5. The RSA private key is **deleted from SecuredWhisker's IndexedDB**
 
-From that point forward, every decryption request pulls the key directly from the SW-KeyBox over Bluetooth — your keys never touch the internet.
+From that point forward, every time SecuredWhisker needs to decrypt a message, it fetches the RSA private key directly from the SW-KeyBox over Bluetooth — your key never touches the network.
 
 ---
 

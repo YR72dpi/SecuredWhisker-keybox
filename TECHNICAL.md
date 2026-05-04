@@ -338,3 +338,9 @@ sudo systemctl status sw-keybox
 sudo systemctl restart sw-keybox
 sudo journalctl -u sw-keybox -f   # live logs
 ```
+
+---
+
+## Installation
+
+See [INSTALL.md](INSTALL.md) for the full installation guide (`git clone` + `./setup.sh`).
